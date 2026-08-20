@@ -1,3 +1,2 @@
-cactus-needle --no-deps
 huggingface_hub
 rich
