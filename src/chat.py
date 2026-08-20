@@ -54,7 +54,33 @@ def format_tool_results(results: list) -> None:
         console.print(table)
 
 
-def format_value(key: str, value) -> str:
+def _render_nested_dict(data: dict) -> Table:
+    t = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+    t.add_column("Field", style="cyan", no_wrap=True)
+    t.add_column("Value")
+    for k, v in data.items():
+        t.add_row(k, format_value(k, v))
+    return t
+
+
+def _render_list_of_dicts(items: list[dict]) -> Table:
+    if not items:
+        return _render_nested_dict({})
+
+    keys = list(items[0].keys())
+    t = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+    for k in keys:
+        t.add_column(k, style="cyan")
+    for item in items:
+        t.add_row(*(format_value(k, item.get(k, "")) for k in keys))
+    return t
+
+
+def format_value(key: str, value) -> str | Table:
+    if isinstance(value, dict):
+        return _render_nested_dict(value)
+    if isinstance(value, list) and value and isinstance(value[0], dict):
+        return _render_list_of_dicts(value)
     if isinstance(value, float):
         if "percent" in key:
             return f"{value:.1f}%"
@@ -64,6 +90,26 @@ def format_value(key: str, value) -> str:
     if isinstance(value, int):
         return f"{value:,}"
     return str(value)
+
+
+def format_metrics(result: dict) -> None:
+    parts = []
+    prefill_tps = result.get("prefill_tps")
+    decode_tps = result.get("decode_tps")
+    peak_ram = result.get("peak_ram_mb")
+    confidence = result.get("confidence")
+
+    if prefill_tps is not None:
+        parts.append(f"prefill {prefill_tps:,.1f} tok/s")
+    if decode_tps is not None:
+        parts.append(f"decode {decode_tps:,.1f} tok/s")
+    if peak_ram is not None:
+        parts.append(f"peak ram {peak_ram:,.1f} MB")
+    if confidence is not None:
+        parts.append(f"confidence {confidence:.4f}")
+
+    if parts:
+        console.print(f"[dim]  {' · '.join(parts)}[/dim]")
 
 
 def init_chat(agent: needle.Needle):
@@ -103,6 +149,7 @@ def init_chat(agent: needle.Needle):
                 console.print()
                 format_tool_results(results)
 
+            format_metrics(result)
             console.print()
         else:
             console.print()
