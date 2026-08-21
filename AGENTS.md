@@ -16,11 +16,24 @@ src/
 ├── main.py              # Entry point - don't modify unless changing app flow
 ├── agent.py             # Tool registration - add imports and tools here
 ├── chat.py              # UI layer - format_tool_results() handles display
+├── server.py            # HTTP API + static server (web mode, --web flag)
+├── web/
+│   └── index.html       # Single-file chat frontend (inline CSS/JS)
 └── tools/
     ├── ping_tool.py             # Example: simple tool with parameter
     ├── get_system_usage_tool.py # Example: complex tool, no parameters
     └── time_tool.py             # Example: datetime tool
 ```
+
+## Web Server (`src/server.py`)
+
+The web UI + API runs on Python's stdlib `http.server` (no web framework). Key rules:
+
+- **All engine calls must go through `AgentState`** - it holds the `threading.Lock` required because the native engine is a global singleton and not thread-safe. Never call `agent.run()`/`agent.reset()` directly from a handler.
+- API endpoints are defined in `Handler.do_GET` / `Handler.do_POST`; keep the `/api/*` naming.
+- Errors return JSON: 400 for bad input, 500 for engine failures, always `{"error": "..."}`.
+- The frontend is a single self-contained file (`src/web/index.html`, inline CSS/JS) served from `WEB_DIR`. No build step, no external assets, no frameworks.
+- Launch with `python3 src/main.py --web [--host H] [--port P]`.
 
 ## Creating a New Tool
 

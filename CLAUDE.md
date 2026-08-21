@@ -9,14 +9,18 @@ A Python CLI chatbot powered by `cactus-needle`, a local-first AI agent framewor
 - Python 3.12
 - `cactus-needle` (imported as `needle`) - Local LLM agent framework
 - `rich` - Terminal UI formatting
+- Python stdlib `http.server` - Web UI + API server (no web framework)
 
 ## Project Structure
 
 ```
 src/
-  main.py          - Entry point: creates agent, starts chat REPL
+  main.py          - Entry point: creates agent, starts chat REPL or web server (--web)
   agent.py         - Agent factory: registers tools with needle
   chat.py          - Rich-powered interactive chat loop
+  server.py        - HTTP API + static file server for the web UI
+  web/
+    index.html     - Single-file chat frontend (inline CSS/JS, no frameworks)
   tools/
     ping_tool.py             - Returns pong (simple test tool)
     get_system_usage_tool.py - CPU and RAM stats from /proc
@@ -27,18 +31,50 @@ src/
 
 ```bash
 source .needle-test-venv/bin/activate
-python3 src/main.py
+python3 src/main.py            # terminal chat REPL
+python3 src/main.py --web      # web UI + API on http://127.0.0.1:8000
 # or
-./start.sh
+./start.sh                     # passes args through: ./start.sh --web --port 8000
 ```
+
+### CLI flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--web` | off | Start the web UI + API server instead of the REPL |
+| `--host` | `127.0.0.1` | Web server bind address |
+| `--port` | `8000` | Web server port |
 
 ## How It Works
 
 1. `main.py` calls `init_agent()` from `agent.py` which creates a `needle.Needle` instance with registered tools
-2. `init_chat(agent)` starts a REPL loop that reads user input
-3. `agent.run(prompt)` sends the query to the local LLM which decides which tools to call
-4. The LLM returns `function_calls` which are executed, results fed back, repeated up to 8 steps
-5. Results are formatted as Rich tables with labels
+2. Terminal mode: `init_chat(agent)` starts a REPL loop that reads user input
+3. Web mode (`--web`): `server.serve(agent, host, port)` starts a stdlib `ThreadingHTTPServer`
+4. `agent.run(prompt)` sends the query to the local LLM which decides which tools to call
+5. The LLM returns `function_calls` which are executed, results fed back, repeated up to 8 steps
+6. Results are formatted as Rich tables with labels (terminal) or HTML cards (web)
+
+## HTTP API
+
+Defined in `src/server.py`. All engine access goes through `AgentState`, which wraps every call in a `threading.Lock` because the native engine is a global singleton and not thread-safe - requests are serialized.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Serves `src/web/index.html` |
+| `GET` | `/api/health` | `{"status": "ok", "model": "needle-2"}` |
+| `GET` | `/api/tools` | Tool names, descriptions, parameter names (introspected from `_needle_tool` schemas) |
+| `POST` | `/api/run` | Body `{"query": str, "max_steps": int=8}`; returns the raw `agent.run()` dict as JSON |
+| `POST` | `/api/reset` | Resets conversation state; returns `{"ok": true}` |
+
+Errors: invalid JSON body or missing/empty `query` -> 400; engine failure -> 500; both return `{"error": "..."}`.
+
+Example:
+
+```bash
+curl -s http://127.0.0.1:8000/api/run \
+  -H "Content-Type: application/json" \
+  -d '{"query": "ping 3 times"}'
+```
 
 ## Creating New Tools
 
@@ -160,6 +196,7 @@ data = agent.extract("text to parse", schema=MyPydanticModel)
 ## Important Notes
 
 - The native LLM engine is loaded once globally; only one agent can be active at a time
+- The web server serializes engine access with a lock - one query runs at a time, no streaming
 - Custom weights can be loaded via `needle.Needle(weights="path/to/weights.cact")`
 - The engine runs locally - no API keys needed
 - `__labels__` in tool results are optional but improve display formatting

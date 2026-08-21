@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>needle-test</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #262b36;
+    --text: #e6e9ef;
+    --dim: #8a93a5;
+    --accent: #22d3ee;
+    --user-bg: #1c2733;
+    --error: #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 17px; letter-spacing: .5px; }
+  header h1 span { color: var(--accent); }
+  header .tag { color: var(--dim); font-size: 12.5px; }
+  details.tools { margin-left: auto; font-size: 13px; color: var(--dim); max-width: 100%; }
+  details.tools summary { cursor: pointer; user-select: none; }
+  details.tools summary:hover { color: var(--text); }
+  details.tools ul { margin: 8px 0 2px; padding-left: 18px; }
+  details.tools li { margin-bottom: 4px; }
+  details.tools b { color: var(--accent); font-weight: 600; }
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .msg { max-width: 78%; padding: 10px 14px; border-radius: 10px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user {
+    align-self: flex-end;
+    background: var(--user-bg);
+    border: 1px solid #2d3d52;
+  }
+  .msg.bot {
+    align-self: flex-start;
+    background: var(--panel);
+    border: 1px solid var(--border);
+  }
+  .msg.note { align-self: center; background: none; border: none; color: var(--dim); font-size: 12.5px; padding: 0; }
+  .msg.error-msg { border-color: #7f1d1d; color: var(--error); }
+  .reasoning { color: var(--dim); font-style: italic; margin-bottom: 10px; }
+  .card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+  .card:first-of-type { margin-top: 0; }
+  .card-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    color: var(--dim);
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,.02);
+  }
+  .card table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .card td { padding: 5px 10px; vertical-align: top; }
+  .card td.k { color: var(--accent); white-space: nowrap; width: 1%; padding-right: 18px; }
+  .card td.v { word-break: break-word; }
+  .metrics { color: var(--dim); font-size: 12px; margin-top: 8px; }
+  .thinking { align-self: flex-start; color: var(--dim); font-style: italic; }
+  .thinking::after { content: "..."; animation: dots 1.2s steps(4) infinite; }
+  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+  form#composer {
+    display: flex;
+    gap: 8px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+  }
+  #input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font: inherit;
+    padding: 10px 14px;
+    outline: none;
+  }
+  #input:focus { border-color: var(--accent); }
+  button {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    padding: 10px 18px;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  #send { background: var(--accent); border-color: var(--accent); color: #06222a; font-weight: 600; }
+  #send:hover:not(:disabled) { filter: brightness(1.1); color: #06222a; }
+</style>
+</head>
+<body>
+<header>
+  <h1>needle<span>-test</span></h1>
+  <span class="tag">local agent &middot; no cloud</span>
+  <details class="tools" id="toolsBox">
+    <summary>tools</summary>
+    <ul id="toolList"></ul>
+  </details>
+</header>
+
+<main id="messages">
+  <div class="msg note">type a query and the agent will pick tools to answer it</div>
+</main>
+
+<form id="composer">
+  <input id="input" type="text" placeholder="e.g. ping 3 times" autocomplete="off" autofocus>
+  <button id="send" type="submit">Send</button>
+  <button id="reset" type="button">Reset</button>
+</form>
+
+<script>
+(function () {
+  "use strict";
+
+  var messages = document.getElementById("messages");
+  var input = document.getElementById("input");
+  var sendBtn = document.getElementById("send");
+  var resetBtn = document.getElementById("reset");
+  var toolList = document.getElementById("toolList");
+  var pending = false;
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function scroll() {
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function addMessage(className, text) {
+    var div = document.createElement("div");
+    div.className = "msg " + className;
+    div.innerHTML = text;
+    messages.appendChild(div);
+    scroll();
+    return div;
+  }
+
+  function formatValue(key, value) {
+    if (value === null || value === undefined) return "-";
+    if (typeof value === "object") return JSON.stringify(value, null, 2);
+    if (typeof value === "number") {
+      var text = Number.isInteger(value)
+        ? value.toLocaleString("en-US")
+        : value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (/%|percent/.test(key)) return text + "%";
+      if (/mb|gb/i.test(key)) return text + " MB";
+      return text;
+    }
+    return String(value);
+  }
+
+  function labelFor(labels, key) {
+    return labels[key] || key.replace(/_/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+  }
+
+  function renderResults(container, results) {
+    results.forEach(function (item) {
+      if (!item || typeof item !== "object") {
+        addCard(container, "Result", [["Value", String(item)]]);
+        return;
+      }
+      if (item.error !== undefined && Object.keys(item).length === 1) {
+        var err = document.createElement("div");
+        err.className = "card";
+        err.style.borderColor = "#7f1d1d";
+        err.innerHTML = '<div class="card-title">Tool Error</div>' +
+          '<table><tr><td class="v" style="color:var(--error)">Error: ' + escapeHtml(item.error) + "</td></tr></table>";
+        container.appendChild(err);
+        return;
+      }
+      var labels = item.__labels__ || {};
+      var rows = Object.keys(item)
+        .filter(function (k) { return k !== "__labels__"; })
+        .map(function (k) {
+          return [escapeHtml(labelFor(labels, k)), escapeHtml(formatValue(k, item[k]))];
+        });
+      addCard(container, "Result", rows);
+    });
+  }
+
+  function addCard(container, title, rows) {
+    var card = document.createElement("div");
+    card.className = "card";
+    var body = rows.map(function (row) {
+      return "<tr><td class='k'>" + row[0] + "</td><td class='v'>" + row[1] + "</td></tr>";
+    }).join("");
+    card.innerHTML = '<div class="card-title">' + escapeHtml(title) + "</div><table>" + body + "</table>";
+    container.appendChild(card);
+  }
+
+  function renderMetrics(container, result) {
+    var parts = [];
+    if (result.prefill_tps != null) parts.push("prefill " + result.prefill_tps.toFixed(1) + " tok/s");
+    if (result.decode_tps != null) parts.push("decode " + result.decode_tps.toFixed(1) + " tok/s");
+    if (result.peak_ram_mb != null) parts.push("peak ram " + result.peak_ram_mb.toFixed(1) + " MB");
+    if (result.confidence != null) parts.push("confidence " + Number(result.confidence).toFixed(4));
+    if (parts.length) {
+      var line = document.createElement("div");
+      line.className = "metrics";
+      line.textContent = parts.join(" \u00b7 ");
+      container.appendChild(line);
+    }
+  }
+
+  function setPending(state) {
+    pending = state;
+    sendBtn.disabled = state;
+    input.disabled = state;
+    resetBtn.disabled = state;
+    if (!state) input.focus();
+  }
+
+  function send(query) {
+    setPending(true);
+    addMessage("user", escapeHtml(query));
+    var thinking = document.createElement("div");
+    thinking.className = "thinking";
+    thinking.textContent = "thinking";
+    messages.appendChild(thinking);
+    scroll();
+
+    fetch("/api/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: query })
+    })
+      .then(function (res) {
+        return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+      })
+      .then(function (res) {
+        thinking.remove();
+        if (!res.ok || res.data.error) {
+          addMessage("bot error-msg", escapeHtml(res.data.error || "request failed"));
+          return;
+        }
+        var bot = addMessage("bot", "");
+        var reasoning = (res.data.reasoning || "").trim();
+        if (reasoning) {
+          var r = document.createElement("div");
+          r.className = "reasoning";
+          r.textContent = reasoning;
+          bot.appendChild(r);
+        }
+        renderResults(bot, res.data.results || []);
+        if (!(res.data.results || []).length && !reasoning) {
+          var text = document.createElement("div");
+          text.textContent = res.data.text || res.data.content || "(no content)";
+          bot.appendChild(text);
+        }
+        renderMetrics(bot, res.data);
+        scroll();
+      })
+      .catch(function () {
+        thinking.remove();
+        addMessage("bot error-msg", "could not reach the server");
+      })
+      .finally(function () {
+        setPending(false);
+      });
+  }
+
+  function resetChat() {
+    setPending(true);
+    fetch("/api/reset", { method: "POST" })
+      .then(function () {
+        messages.innerHTML = "";
+        addMessage("note", "conversation reset");
+      })
+      .catch(function () {
+        addMessage("bot error-msg", "could not reach the server");
+      })
+      .finally(function () {
+        setPending(false);
+      });
+  }
+
+  function loadTools() {
+    fetch("/api/tools")
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        toolList.innerHTML = (data.tools || []).map(function (t) {
+          var params = t.parameters.length ? "(" + t.parameters.join(", ") + ")" : "()";
+          var desc = t.description ? " - " + escapeHtml(t.description) : "";
+          return "<li><b>" + escapeHtml(t.name) + "</b>" + escapeHtml(params) + desc + "</li>";
+        }).join("");
+      })
+      .catch(function () {
+        document.getElementById("toolsBox").style.display = "none";
+      });
+  }
+
+  document.getElementById("composer").addEventListener("submit", function (event) {
+    event.preventDefault();
+    var query = input.value.trim();
+    if (!query || pending) return;
+    input.value = "";
+    send(query);
+  });
+
+  resetBtn.addEventListener("click", function () {
+    if (!pending) resetChat();
+  });
+
+  loadTools();
+})();
+</script>
+</body>
+</html>

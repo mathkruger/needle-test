@@ -6,4 +6,10 @@ from tools.volume_tool import set_volume
 from tools.list_tools_tool import list_tools
 
 def init_agent() -> needle.Needle:
-    return needle.Needle(tools=[ping, get_system_usage, get_time_tool, set_volume, list_tools])
+    return needle.Needle(tools=[
+        ping,
+        get_system_usage,
+        get_time_tool,
+        set_volume,
+        list_tools
+    ])
